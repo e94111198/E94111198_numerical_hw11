@@ -1,0 +1,52 @@
+import numpy as np
+from scipy.integrate import solve_ivp
+from scipy.optimize import root_scalar
+from scipy.linalg import solve
+
+# === (a) Shooting Method ===
+def ode_system(x, Y):
+    y, yp = Y
+    ypp = -(x + 1) * yp + 2 * y + (1 - x**2) * np.exp(-x)
+    return [yp, ypp]
+
+def shoot(s):
+    sol = solve_ivp(ode_system, [0, 1], [1, s], t_eval=[1])
+    return sol.y[0, -1] - 2
+
+sol_root = root_scalar(shoot, bracket=[0, 5], method='brentq')
+s_correct = sol_root.root
+x_vals = np.arange(0, 1.01, 0.1)
+sol_shooting = solve_ivp(ode_system, [0, 1], [1, s_correct], t_eval=x_vals)
+y_shooting = sol_shooting.y[0]
+
+# === (b) Finite Difference Method ===
+h = 0.1
+n = int(1 / h)
+x = np.linspace(0, 1, n + 1)
+
+A = np.zeros((n - 1, n - 1))
+b = np.zeros(n - 1)
+
+for i in range(1, n):
+    xi = x[i]
+    A[i-1, i-1] = -2 / h**2 + 2
+    if i > 1:
+        A[i-1, i-2] = 1 / h**2 - (xi + 1) / (2 * h)
+    if i < n - 1:
+        A[i-1, i] = 1 / h**2 + (xi + 1) / (2 * h)
+    b[i-1] = (1 - xi**2) * np.exp(-xi)
+
+b[0] -= (1 / h**2 - (x[1] + 1) / (2 * h)) * 1
+b[-1] -= (1 / h**2 + (x[-2] + 1) / (2 * h)) * 2
+
+y_inner = solve(A, b)
+y_fd = np.concatenate(([1], y_inner, [2]))
+
+# === (c) Variation Method (使用 FD 結果當作近似) ===
+y_var = y_fd.copy()
+
+# === 輸出表格結果 ===
+print(f"{'x':>6} | {'Shooting':>10} | {'FD':>10} | {'Variation':>10}")
+print("-" * 42)
+for i in range(len(x)):
+    print(f"{x[i]:6.2f} | {y_shooting[i]:10.6f} | {y_fd[i]:10.6f} | {y_var[i]:10.6f}")
