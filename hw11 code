@@ -1,52 +1,95 @@
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy.integrate import solve_ivp
-from scipy.optimize import root_scalar
 from scipy.linalg import solve
 
-# === (a) Shooting Method ===
-def ode_system(x, Y):
-    y, yp = Y
-    ypp = -(x + 1) * yp + 2 * y + (1 - x**2) * np.exp(-x)
-    return [yp, ypp]
-
-def shoot(s):
-    sol = solve_ivp(ode_system, [0, 1], [1, s], t_eval=[1])
-    return sol.y[0, -1] - 2
-
-sol_root = root_scalar(shoot, bracket=[0, 5], method='brentq')
-s_correct = sol_root.root
-x_vals = np.arange(0, 1.01, 0.1)
-sol_shooting = solve_ivp(ode_system, [0, 1], [1, s_correct], t_eval=x_vals)
-y_shooting = sol_shooting.y[0]
-
-# === (b) Finite Difference Method ===
 h = 0.1
-n = int(1 / h)
-x = np.linspace(0, 1, n + 1)
+x = np.arange(0, 1 + h, h)
+y0, y1 = 1, 2
 
-A = np.zeros((n - 1, n - 1))
-b = np.zeros(n - 1)
+# === Shooting Method ===
+def shooting_method(x):
+    def ode_sys(x, Y):
+        y, dy = Y
+        d2y = -(x + 1) * dy + 2 * y + (1 - x**2) * np.exp(-x)
+        return [dy, d2y]
 
-for i in range(1, n):
-    xi = x[i]
-    A[i-1, i-1] = -2 / h**2 + 2
-    if i > 1:
-        A[i-1, i-2] = 1 / h**2 - (xi + 1) / (2 * h)
-    if i < n - 1:
-        A[i-1, i] = 1 / h**2 + (xi + 1) / (2 * h)
-    b[i-1] = (1 - xi**2) * np.exp(-xi)
+    def v_eq(s):
+        sol = solve_ivp(ode_sys, [x[0], x[-1]], [y0, s], t_eval=[x[-1]])
+        return sol.y[0, -1] - y1
 
-b[0] -= (1 / h**2 - (x[1] + 1) / (2 * h)) * 1
-b[-1] -= (1 / h**2 + (x[-2] + 1) / (2 * h)) * 2
+    from scipy.optimize import root_scalar
+    res = root_scalar(v_eq, method='brentq', bracket=[0, 5])
+    s0 = res.root
+    sol = solve_ivp(ode_sys, [x[0], x[-1]], [y0, s0], t_eval=x)
+    return sol.y[0]
 
-y_inner = solve(A, b)
-y_fd = np.concatenate(([1], y_inner, [2]))
+# === Finite Difference Method ===
+def finite_difference(x):
+    N = len(x) - 2
+    h = x[1] - x[0]
+    A = np.zeros((N, N))
+    b = np.zeros(N)
 
-# === (c) Variation Method (使用 FD 結果當作近似) ===
-y_var = y_fd.copy()
+    for i in range(N):
+        xi = x[i + 1]
+        pi = -(xi + 1)
+        qi = 2
+        ri = (1 - xi**2) * np.exp(-xi)
 
-# === 輸出表格結果 ===
-print(f"{'x':>6} | {'Shooting':>10} | {'FD':>10} | {'Variation':>10}")
-print("-" * 42)
+        if i > 0:
+            A[i, i - 1] = -1 - h / 2 * pi
+        A[i, i] = 2 + h**2 * qi
+        if i < N - 1:
+            A[i, i + 1] = -1 + h / 2 * pi
+
+        b[i] = -h**2 * ri
+
+    b[0] += (1 + h / 2 * -(x[1] + 1)) * y0
+    b[-1] += (1 - h / 2 * -(x[-2] + 1)) * y1
+
+    y_inner = solve(A, b)
+    return np.concatenate(([y0], y_inner, [y1]))
+
+# === Variational Method ===
+def variational_method(x):
+    a, b = 1, 2
+    l = 1
+    n = 5
+
+    p = lambda x: 1
+    q = lambda x: 2
+    f = lambda x: (1 - x**2) * np.exp(-x)
+    dpdx = lambda x: 0
+
+    phi = lambda i, x: np.sin(i * np.pi * x / l)
+    dphi = lambda i, x: (i * np.pi / l) * np.cos(i * np.pi * x / l)
+
+    y1 = a * (1 - x / l) + b * (x / l)
+    F = f(x) + (b - a) / l * dpdx(x) - q(x) * y1
+
+    A = np.zeros((n, n))
+    b_vec = np.zeros(n)
+
+    for i in range(1, n + 1):
+        for j in range(1, n + 1):
+            integrand = p(x) * dphi(i, x) * dphi(j, x) + q(x) * phi(i, x) * phi(j, x)
+            A[i - 1, j - 1] = np.trapz(integrand, x)
+        b_vec[i - 1] = np.trapz(F * phi(i, x), x)
+
+    c = np.linalg.solve(A, b_vec)
+    y2 = np.zeros_like(x)
+    for i in range(1, n + 1):
+        y2 += c[i - 1] * phi(i, x)
+    return y1 + y2
+
+# === Compute All Solutions ===
+y_shooting = shooting_method(x)
+y_fd = finite_difference(x)
+y_var = variational_method(x)
+
+# === Print Results in Table Format ===
+print(f"{'x':>5} | {'Shooting':>10} | {'Finite Diff':>12} | {'Variational':>12}")
+print("-" * 50)
 for i in range(len(x)):
-    print(f"{x[i]:6.2f} | {y_shooting[i]:10.6f} | {y_fd[i]:10.6f} | {y_var[i]:10.6f}")
+    print(f"{x[i]:5.1f} | {y_shooting[i]:10.6f} | {y_fd[i]:12.6f} | {y_var[i]:12.6f}")
